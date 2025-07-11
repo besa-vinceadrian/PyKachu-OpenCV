@@ -1,11 +1,11 @@
 import cv2
 import numpy as np
+import time
+import os
 
-# Global recording and tracking variables
+# Global recording variables
 is_recording = False
 video_writer = None
-tracker = None
-tracking_color = False
 
 # Load Haar Cascade for face detection
 face_cascade = cv2.CascadeClassifier(
@@ -14,16 +14,27 @@ face_cascade = cv2.CascadeClassifier(
 
 # Define color ranges in HSV and their names
 COLOR_RANGES = {
-    "Red":    ([160, 100, 100], [180, 255, 255]),
-    "Blue":   ([100, 150, 0],   [140, 255, 255]),
-    "Yellow": ([20, 100, 100],  [30, 255, 255])
+    "Red": ([160, 100, 100], [180, 255, 255]),
+    "Green": ([40, 70, 70], [80, 255, 255]),
+    "Blue": ([100, 150, 0], [140, 255, 255]),
+    "Yellow": ([20, 100, 100], [30, 255, 255]),
+    "Orange": ([10, 100, 100], [20, 255, 255]),
+    "Pink": ([160, 50, 50], [180, 255, 255]),
+    "Cyan": ([80, 100, 100], [100, 255, 255]),
+    "Brown": ([10, 100, 20], [20, 255, 200]),
+    "Gray": ([0, 0, 50], [180, 50, 200]),
+    "Black": ([0, 0, 0], [180, 255, 50]),
+    "White": ([0, 0, 200], [180, 20, 255]),
+    "Purple": ([140, 100, 100], [160, 255, 255])
 }
 
 def cartoonize(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     gray = cv2.medianBlur(gray, 5)
-    edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                  cv2.THRESH_BINARY, 9, 9)
+    edges = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY, 9, 9
+    )
     color = cv2.bilateralFilter(frame, 9, 250, 250)
     return cv2.bitwise_and(color, color, mask=edges)
 
@@ -35,19 +46,89 @@ def sharpen(frame):
     ])
     return cv2.filter2D(frame, -1, kernel)
 
-def launch_camera(selected_mode):
-    global is_recording, video_writer, tracker, tracking_color
-    cap = cv2.VideoCapture(0)
+def detect_color(frame):
+    hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    for color_name, (lower, upper) in COLOR_RANGES.items():
+        lower_bound = np.array(lower)
+        upper_bound = np.array(upper)
+        mask = cv2.inRange(hsv_frame, lower_bound, upper_bound)
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        if contours:
+            largest = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(largest) > 1000:
+                x, y, w, h = cv2.boundingRect(largest)
+                cv2.rectangle(frame, (x, y), (x + w, y + h),
+                              (0, 255, 0), 2)
+                cv2.putText(frame, f"Color: {color_name}", (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                            (0, 255, 0), 2)
+                break
+    return frame
 
+def countdown_display(frame, count):
+    overlay = frame.copy()
+    cv2.putText(
+        overlay, str(count),
+        (frame.shape[1] // 2 - 20, frame.shape[0] // 2),
+        cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 0, 255), 6
+    )
+    return overlay
+
+def photobooth_mode():
+    cap = cv2.VideoCapture(0)
+    photo_strip = []
+    shot_size = (320, 240)
+    print("[INFO] Get ready! 4 shots will be taken with countdown...")
+    for i in range(4):
+        time.sleep(1)
+        for count in range(3, 0, -1):
+            ret, frame = cap.read()
+            if not ret:
+                print("[ERROR] Camera read failed.")
+                return
+            frame = cv2.flip(frame, 1)
+            frame = countdown_display(frame, count)
+            cv2.imshow("Photobooth", frame)
+            cv2.waitKey(1000)
+        ret, frame = cap.read()
+        if not ret:
+            print("[ERROR] Failed to capture frame.")
+            break
+        frame = cv2.flip(frame, 1)
+        frame = cv2.resize(frame, shot_size)
+        photo_strip.append(frame.copy())
+        print(f"[INFO] Shot {i+1} captured.")
+    if len(photo_strip) == 4:
+        top = cv2.hconcat([photo_strip[0], photo_strip[1]])
+        bottom = cv2.hconcat([photo_strip[2], photo_strip[3]])
+        final_strip = cv2.vconcat([top, bottom])
+
+        # Save with unique filename using timestamp
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"photostrip_{timestamp}.jpg"
+        cv2.imwrite(filename, final_strip)
+        print(f"[INFO] Photo strip saved as {filename}")
+
+        while True:
+            cv2.imshow("PyKachu Photostrip", final_strip)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    else:
+        print("[ERROR] Not enough photos to create a strip.")
+    cap.release()
+    cv2.destroyAllWindows()
+
+def launch_camera(selected_mode):
+    global is_recording, video_writer
+    cap = cv2.VideoCapture(0)
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-
         frame = cv2.flip(frame, 1)
         key = cv2.waitKey(1) & 0xFF
-        display_frame = frame.copy()
-
         if selected_mode == "gray":
             display_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         elif selected_mode == "blur":
@@ -60,138 +141,76 @@ def launch_camera(selected_mode):
         elif selected_mode == "sharpen":
             display_frame = sharpen(frame)
         elif selected_mode == "face":
+            display_frame = frame.copy()
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.3, 5)
             for (x, y, w, h) in faces:
-                cv2.rectangle(display_frame, (x, y)
-                              , (x + w, y + h), (255, 0, 0), 2)
-        elif selected_mode == "color_track":
-            if not tracking_color:
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-                for color_name, (lower, upper) in COLOR_RANGES.items():
-                    lower_np = np.array(lower)
-                    upper_np = np.array(upper)
-                    mask = cv2.inRange(hsv, lower_np, upper_np)
-                    contours, _ = cv2.findContours(mask, 
-                             cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    if contours:
-                        largest = max(contours, key=cv2.contourArea)
-                        if cv2.contourArea(largest) > 1000:
-                            x, y, w, h = cv2.boundingRect(largest)
-                            tracker = cv2.legacy.TrackerCSRT_create()
-                            tracker.init(frame, (x, y, w, h))
-                            tracking_color = True
-                            print(f"[INFO] Tracking {color_name}")
-                            break
-            else:
-                success, box = tracker.update(frame)
-                if success:
-                    x, y, w, h = [int(v) for v in box]
-                    cv2.rectangle(display_frame, (x, y), (x + w, y + h)
-                                  , (0, 255, 255), 2)
-                    cv2.putText(display_frame, "Tracking Color", (x, y - 10)
-                            , cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                else:
-                    cv2.putText(display_frame, "Lost Color", (10, 60)
-                            , cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    tracking_color = False
+                cv2.rectangle(display_frame, (x, y),
+                              (x + w, y + h), (255, 0, 0), 2)
+        elif selected_mode == "color_detect":
+            display_frame = detect_color(frame)
         else:
             display_frame = frame
-
-        cv2.putText(display_frame, f"Mode: {selected_mode.upper()}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
+        cv2.putText(
+            display_frame, f"Mode: {selected_mode.upper()}",
+            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1,
+            (0, 255, 0), 2
+        )
         if is_recording and video_writer is not None:
             video_writer.write(display_frame)
-
         cv2.imshow("Live Filter Camera", display_frame)
-
         if key == ord('q'):
             break
         elif key == ord('r'):
             is_recording = not is_recording
             if is_recording:
+                timestamp = time.strftime("%Y%m%d-%H%M%S")
+                filename = f"recording_{timestamp}.avi"
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                video_writer = cv2.VideoWriter('output.avi', fourcc, 20.0
-                                         , (frame.shape[1], frame.shape[0]))
-                print("[INFO] Recording started.")
+                video_writer = cv2.VideoWriter(
+                    filename, fourcc, 20.0,
+                    (frame.shape[1], frame.shape[0])
+                )
+                print(f"[INFO] Recording started: {filename}")
             else:
                 if video_writer:
                     video_writer.release()
                 video_writer = None
                 print("[INFO] Recording stopped.")
-
     cap.release()
     if video_writer:
         video_writer.release()
-    tracker = None
-    tracking_color = False
     cv2.destroyAllWindows()
 
-def filter_menu():
-    filters = {
-        "1": ("gray", "Grayscale"),
-        "2": ("blur", "Blur"),
-        "3": ("edges", "Edge Detection"),
-        "4": ("cartoon", "Cartoon"),
-        "5": ("sharpen", "Sharpen"),
-        "0": ("back", "Back to Main Menu")
-    }
-
-    while True:
-        print("\n=== Filters / Image Transformations ===")
-        for key, (_, label) in filters.items():
-            print(f"{key}. {label}")
-
-        choice = input("Select a filter (0 to return): ").strip()
-        if choice in filters:
-            mode_key, label = filters[choice]
-            if mode_key == "back":
-                break
-            print(f"[INFO] Launching {label} filter. "
-                    "Press 'q' to quit, 'r' to record.")
-            launch_camera(mode_key)
-        else:
-            print("[ERROR] Invalid choice. Try again.")
-
-def detection_menu():
+def main_menu():
     modes = {
-        "1": ("face", "Face Detection"),
-        "2": ("color_track", "Color Tracking (Red, Blue, Yellow)"),
-        "0": ("back", "Back to Main Menu")
+        "1": ("normal", "Normal"),
+        "2": ("gray", "Grayscale"),
+        "3": ("blur", "Blur"),
+        "4": ("edges", "Edge Detection"),
+        "5": ("cartoon", "Cartoon"),
+        "6": ("sharpen", "Sharpen"),
+        "7": ("face", "Face Detection"),
+        "8": ("color_detect", "Color Detection"),
+        "9": ("photobooth", "Photobooth Mode"),
+        "0": ("exit", "Exit App")
     }
-
     while True:
-        print("\n=== Detection / Tracking Modes ===")
+        print("\n=== PyKachu Live Camera Menu ===")
         for key, (_, label) in modes.items():
             print(f"{key}. {label}")
-
-        choice = input("Select a mode (0 to return): ").strip()
+        choice = input("Select a mode (0 to exit): ").strip()
         if choice in modes:
-            mode_key, label = modes[choice]
-            if mode_key == "back":
+            mode_key, mode_label = modes[choice]
+            if mode_key == "exit":
+                print("Exiting program.")
                 break
-            print(f"[INFO] Launching {label}. "
-                  "Press 'q' to quit, 'r' to record.")
-            launch_camera(mode_key)
-        else:
-            print("[ERROR] Invalid choice. Try again.")
-
-def main_menu():
-    while True:
-        print("\n=== Live Filter Camera - Main Menu ===")
-        print("1. Filters / Image Transformations")
-        print("2. Detection / Tracking Modes")
-        print("0. Exit")
-
-        choice = input("Choose a category: ").strip()
-        if choice == "1":
-            filter_menu()
-        elif choice == "2":
-            detection_menu()
-        elif choice == "0":
-            print("Exiting program.")
-            break
+            elif mode_key == "photobooth":
+                photobooth_mode()
+            else:
+                print(f"[INFO] Launching {mode_label} mode.")
+                print("Press 'q' to quit, 'r' to record.")
+                launch_camera(mode_key)
         else:
             print("[ERROR] Invalid choice. Try again.")
 
