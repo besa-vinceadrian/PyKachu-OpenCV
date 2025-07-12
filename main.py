@@ -4,19 +4,19 @@ from face_detection import run_face_detection
 
 
 def display_menu():
-    print("\n=================================")
-    print("==== PYKACHU LIVE CAMERA MENU ====")
-    print("||      1. Normal               ||")
-    print("||      2. Grayscale            ||")
-    print("||      3. Blur                 ||")
-    print("||      4. Edge Detection       ||")
-    print("||      5. Cartoon              ||")
-    print("||      6. Sharpen              ||")
-    print("||      7. Photobooth Mode      ||")
-    print("||      8. Face Detection       ||")
-    print("||      9. Color Tracking       ||")
-    print("||      0. Exit App             ||")
-    print("=================================")
+    print("\n=============================================")
+    print("=========== PYKACHU LIVE CAMERA MENU ==========")
+    print("||      1. Normal                            ||")
+    print("||      2. Grayscale                         ||")
+    print("||      3. Blur                              ||")
+    print("||      4. Edge Detection                    ||")
+    print("||      5. Cartoon                           ||")
+    print("||      6. Sharpen                           ||")
+    print("||      7. Photobooth Mode                   ||")
+    print("||      8. Face Detection                    ||")
+    print("||      9. Color Tracking(Red, Blue, Yellow) ||")
+    print("||      0. Exit App                          ||")
+    print("===============================================")
 
 
 def get_filter_choice():
