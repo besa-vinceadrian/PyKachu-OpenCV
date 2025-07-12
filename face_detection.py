@@ -34,5 +34,3 @@ def run_face_detection():
 
     cap.release()
     cv2.destroyAllWindows()
-
-run_face_detection()
